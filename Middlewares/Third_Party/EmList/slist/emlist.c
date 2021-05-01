@@ -38,6 +38,7 @@ bool emlist_contains(LinkedList* list, void* value) {
 void emlist_print(LinkedList* list, fun_ptr print) {
     LinkedListIterator iterator = emlist_iterator(list);
     LinkedListElement* candidate = NULL;
+    printf("head %p tail %p\n", list->head, list->tail);
     while((candidate = emlist_iterator_next(&iterator)) != NULL) {
          print(candidate);
     }
@@ -54,7 +55,6 @@ bool emlist_pushback(LinkedList* list, void* value) {
             list->head = element;
             list->tail = element;
         } else {
-            LinkedListIterator iterator = emlist_iterator(list);
             LinkedListElement* current = list->tail;
             current->next = element;
             list->tail = element;

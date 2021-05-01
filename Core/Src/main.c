@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #include "emdlist.h"
 
 /* USER CODE END Includes */
@@ -86,6 +87,7 @@ SDRAM_HandleTypeDef hsdram1;
 
 osThreadId uSDThreadHandle;
 osThreadId LCDThreadHandle;
+osSemaphoreId BinarySem01Handle;
 /* USER CODE BEGIN PV */
 
 FATFS SDFatFs;  /* File system object for SD card logical drive */
@@ -121,7 +123,7 @@ void StartuSDThread(void const * argument);
 void StartLCDThread(void const * argument);
 
 /* USER CODE BEGIN PFP */
-FRESULT scan_files (char* path);
+FRESULT scan_files (char* path, DoubleLinkedList* dlist);
 FRESULT read_filename(char* path, DIR dir, char* fname);
 /* USER CODE END PFP */
 
@@ -278,8 +280,17 @@ int main(void)
 	/* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* definition and creation of BinarySem01 */
+  osSemaphoreDef(BinarySem01);
+  BinarySem01Handle = osSemaphoreCreate(osSemaphore(BinarySem01), 1);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 	/* add semaphores, ... */
+  /* the semaphore BinarySem01 is armed when it is created */
+  osSemaphoreWait(BinarySem01Handle, osWaitForever);
+  /* the semaphore BinarySem01 is triggered */
+
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -296,8 +307,8 @@ int main(void)
   uSDThreadHandle = osThreadCreate(osThread(uSDThread), NULL);
 
   /* definition and creation of LCDThread */
-  //osThreadDef(LCDThread, StartLCDThread, osPriorityIdle, 0, 1024);
-  //LCDThreadHandle = osThreadCreate(osThread(LCDThread), NULL);
+  osThreadDef(LCDThread, StartLCDThread, osPriorityIdle, 0, 1024);
+  LCDThreadHandle = osThreadCreate(osThread(LCDThread), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
 	/* add threads, ... */
@@ -1402,15 +1413,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-FRESULT scan_files (char* path)        /* Start node to be scanned (***also used as work area***) */
+FRESULT scan_files (char* path, DoubleLinkedList* dlist)  /* Start node to be scanned (***also used as work area***) */
 {
 	FRESULT res;
 	DIR dir;
-	UINT i;
 	static FILINFO fno;
 	char buffer[128];
-
-	dlist = emdlist_create();
 
 	res = f_opendir(&dir, path);                       /* Open the directory */
 	if (res == FR_OK) {
@@ -1422,13 +1430,13 @@ FRESULT scan_files (char* path)        /* Start node to be scanned (***also used
 			res = f_readdir(&dir, &fno);                   /* Read a directory item */
 
 			if (res != FR_OK || fno.fname[0] == 0) break;  /* Break on error or end of dir */
-//			if (fno.fattrib & AM_DIR) {                    /* It is a directory */
-//				i = strlen(path);
-//				sprintf(&path[i], "/%s", fno.fname);
-//				res = scan_files(path, items, items_sz);     /* Enter the directory */
-//				if (res != FR_OK) break;
-//				path[i] = 0;
-//			} else
+			//			if (fno.fattrib & AM_DIR) {                    /* It is a directory */
+			//				i = strlen(path);
+			//				sprintf(&path[i], "/%s", fno.fname);
+			//				res = scan_files(path, items, items_sz);     /* Enter the directory */
+			//				if (res != FR_OK) break;
+			//				path[i] = 0;
+			//			} else
 			{                                       /* It is a file. */
 				snprintf(buffer, sizeof(buffer), "%s/%s\n", path, fno.fname);
 				printf("%s\n", buffer);
@@ -1437,7 +1445,7 @@ FRESULT scan_files (char* path)        /* Start node to be scanned (***also used
 				*item=dir;
 				emdlist_pushfront(dlist, (void*) item);
 
-				snprintf(buffer, sizeof(buffer), "DIR.dir pointer %x\n", dir.dir);
+				snprintf(buffer, sizeof(buffer), "DIR.dir pointer %p\n", dir.dir);
 				printf("%s\n", buffer);
 			}
 		}
@@ -1451,9 +1459,7 @@ FRESULT read_filename(char* path, DIR target_dir, char* fname)        /* Start n
 {
 	FRESULT res;
 	DIR dir;
-	UINT i;
 	static FILINFO fno;
-	char buffer[STRING_SZ];
 
 	res = f_opendir(&dir, path);                       /* Open the directory */
 	if (res == FR_OK) {
@@ -1478,10 +1484,10 @@ FRESULT read_filename(char* path, DIR target_dir, char* fname)        /* Start n
 }
 
 void print(DoubleLinkedListElement* candidate){
-   DIR *e=(DIR*) candidate->value;
-   printf("%p prev %p next %p", candidate, candidate->prev, candidate->next);
-   if (e) printf(" element %p --> %p", e, e->dir);
-   printf("\n");
+	DIR *e=(DIR*) candidate->value;
+	printf("%p prev %p next %p", candidate, candidate->prev, candidate->next);
+	if (e) printf(" element %p --> %p", e, e->dir);
+	printf("\n");
 }
 
 /* USER CODE END 4 */
@@ -1497,23 +1503,26 @@ void print(DoubleLinkedListElement* candidate){
 void StartuSDThread(void const * argument)
 {
   /* USER CODE BEGIN 5 */
+	dlist = emdlist_create(); // create double linked list
+	if (dlist == NULL) Error_Handler();
+
 	sFONT *font= (sFONT*) malloc(sizeof(sFONT));
 	if (!font) Error_Handler();
 	BSP_LED_Off(LED1);
 
 	Screen_Init(&screen);
-//
+	//
 	Screen_Flip_Buffers(&screen);
 	BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
 	BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
 	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
-//
+	//
 	Screen_Flip_Buffers(&screen);
 	BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
 	BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
 	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
 
-    uint32_t SX=BSP_LCD_GetXSize();
+	uint32_t SX=BSP_LCD_GetXSize();
 	uint32_t SY=BSP_LCD_GetYSize();
 
 	/*##-1- Link the micro SD disk I/O driver ##################################*/
@@ -1527,59 +1536,67 @@ void StartuSDThread(void const * argument)
 		}
 		/*##-3- Create a FAT file system (format) on the logical drive #########*/
 		char path[2]="/";
-		FRESULT res = scan_files(path);
+		FRESULT res = scan_files(path, dlist);
+		if (res != FR_OK) Error_Handler();
+
 		snprintf(buffer, sizeof(buffer), "==============================================");
 		printf("%s\n", buffer);
 
-	    DoubleLinkedListIterator iterator = emdlist_iterator(dlist);
-	    DoubleLinkedListElement* candidate = NULL;
-	    while((candidate = emdlist_iterator_next(&iterator)) != NULL) {
-	    	DIR *dir = candidate->value;
+		DoubleLinkedListIterator iterator = emdlist_iterator(dlist);
+		DoubleLinkedListElement* candidate = NULL;
+		while((candidate = emdlist_iterator_next(&iterator)) != NULL) {
+			DIR *dir = candidate->value;
 			snprintf(buffer, sizeof(buffer), "dir %p", dir->dir);
 			printf("%s\n", buffer);
 			FRESULT res = read_filename(path, *dir, buffer);
 			if (res != FR_OK) continue;
 			printf("%s\n", buffer);
-	    }
+		}
 
 		snprintf(buffer, sizeof(buffer), "==============================================");
 		printf("%s\n", buffer);
 		emdlist_print(dlist, print);
+
+		snprintf(buffer, sizeof(buffer), "==============================================");
+		printf("%s\n", buffer);
+		emdlist_reverse_print(dlist, print);
 	}
 
 	BSP_LCD_SetFont(&Font12);
 	font = BSP_LCD_GetFont();
 	uint16_t Height = font->Height;
 
+	osSemaphoreRelease(BinarySem01Handle); // increases the semaphore by 1
+
 	/* Infinite Loop */
 	for( ;; )
 	{
 		osDelay(1);
 
-		BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
-		BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
-		BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
-
-	    DoubleLinkedListIterator iterator = emdlist_iterator(dlist);
-	    DoubleLinkedListElement* candidate = NULL;
-	    uint16_t offset=0;
-	    while((candidate = emdlist_iterator_next(&iterator)) != NULL) {
-	    	DIR *dir = candidate->value;
-			char path[2]="/";
-			FRESULT res = read_filename(path, *dir, buffer);
-			if (res != FR_OK) continue;
-
-			BSP_LCD_SetFont(&Font12);
-			BSP_LCD_DisplayStringAt(0, Height*(offset%(SY/Height))+5, (uint8_t*)buffer, LEFT_MODE);
-			if ((offset%(SY/Height))==SY/Height-1){
-			   Screen_Flip_Buffers(&screen);
-			   BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
-			   osDelay(1000);
-			}
-			offset++;
-	    }
-
-		Screen_Flip_Buffers(&screen);
+//		BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
+//		BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
+//		BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
+//
+//		DoubleLinkedListIterator iterator = emdlist_iterator(dlist);
+//		DoubleLinkedListElement* candidate = NULL;
+//		uint16_t offset=0;
+//		while((candidate = emdlist_iterator_next(&iterator)) != NULL) {
+//			DIR *dir = candidate->value;
+//			char path[2]="/";
+//			FRESULT res = read_filename(path, *dir, buffer);
+//			if (res != FR_OK) continue;
+//
+//			BSP_LCD_SetFont(&Font12);
+//			BSP_LCD_DisplayStringAt(0, Height*(offset%(SY/Height))+5, (uint8_t*)buffer, LEFT_MODE);
+//			if ((offset%(SY/Height))==SY/Height-1){
+//				Screen_Flip_Buffers(&screen);
+//				BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
+//				osDelay(1000);
+//			}
+//			offset++;
+//		}
+//
+//		Screen_Flip_Buffers(&screen);
 		osDelay(1000);
 	}
 
@@ -1598,20 +1615,81 @@ void StartLCDThread(void const * argument)
   /* USER CODE BEGIN StartLCDThread */
 
 	Screen_Init(&screen);
-//
+	//
 	Screen_Flip_Buffers(&screen);
 	BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
 	BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
 	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
-//
+	//
 	Screen_Flip_Buffers(&screen);
 	BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
 	BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
 	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
 
-    uint32_t SX=BSP_LCD_GetXSize();
+	uint32_t SX=BSP_LCD_GetXSize();
 	uint32_t SY=BSP_LCD_GetYSize();
 
+	sFONT *font= (sFONT*) malloc(sizeof(sFONT));
+	if (!font) Error_Handler();
+	BSP_LED_Off(LED1);
+
+	BSP_LCD_SetFont(&Font12);
+	font = BSP_LCD_GetFont();
+	uint16_t Height = font->Height;
+	uint16_t NROWS = SY/Height;
+
+	/* Wait until the semaphore is armed by StartuSD Thread */
+	osSemaphoreWait(BinarySem01Handle, osWaitForever); // decrease the semaphore by 1
+
+	DoubleLinkedListIterator iterator = emdlist_iterator(dlist);
+	DoubleLinkedListElement* candidate = NULL;
+	while((candidate = emdlist_iterator_next(&iterator)) != NULL) {
+
+		BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
+		uint16_t offset=0;
+		for (DoubleLinkedListElement* local=candidate; local !=NULL; local=local->next){
+			DIR *dir = local->value;
+			char path[2]="/";
+			FRESULT res = read_filename(path, *dir, buffer);
+			if (res != FR_OK)
+			   strncpy(buffer, "hidden directory", sizeof(buffer));
+			BSP_LCD_SetFont(&Font12);
+			BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
+			BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
+			//printf("%s\n", buffer);
+			BSP_LCD_DisplayStringAt(0, Height*(offset % NROWS)+5, (uint8_t*)buffer, LEFT_MODE);
+			offset++;
+		}
+		Screen_Flip_Buffers(&screen);
+		osDelay(1000);
+	}
+
+	snprintf(buffer, sizeof(buffer), "==============================================");
+	printf("%s\n", buffer);
+
+	iterator = emdlist_reverse_iterator(dlist);
+	while((candidate = emdlist_iterator_prev(&iterator)) != NULL) {
+
+		BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
+		DoubleLinkedListElement* local=candidate;
+		uint16_t offset=0;
+		for (DoubleLinkedListElement* local=candidate; local !=NULL; local=local->prev){
+			printf("local %p prev %p value %p\n", local, local->prev, local->value);
+			DIR *dir = local->value;
+			char path[2]="/";
+			FRESULT res = read_filename(path, *dir, buffer);
+			if (res != FR_OK)
+			   strncpy(buffer, "hidden directory", sizeof(buffer));
+			BSP_LCD_SetFont(&Font12);
+			BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
+			BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
+			//printf("%s\n", buffer);
+			BSP_LCD_DisplayStringAt(0, Height*(offset % NROWS)+5, (uint8_t*)buffer, LEFT_MODE);
+			offset++;
+		}
+		Screen_Flip_Buffers(&screen);
+		osDelay(1000);
+	}
 	/* Infinite loop */
 	for(;;)
 	{
@@ -1621,18 +1699,19 @@ void StartLCDThread(void const * argument)
 		BSP_LCD_SetBackColor(LCD_COLOR_BLUE);//set text background color
 		BSP_LCD_SetTextColor(LCD_COLOR_WHITE);//set text color
 
-		//BSP_LCD_DisplayStringAt(0, 0, (uint8_t*)"Hello to everyone!", CENTER_MODE);
+		BSP_LCD_SetFont(&Font24);
+		BSP_LCD_DisplayStringAt(0, 0, (uint8_t*)"Hello to everyone!", CENTER_MODE);
 
-//		for (UINT it=0; it<items_sz; it++){
-//			snprintf(buffer, sizeof(buffer), "%2u dir %x", it, items[it].dir);
-//			printf("%s\n", buffer);
-//			BSP_LCD_DisplayStringAt(0, 25*(it%10), (uint8_t*)buffer, LEFT_MODE);
-//			if ((it%10)==9){
-//			   Screen_Flip_Buffers(&screen);
-//			   BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
-//			   osDelay(1000);
-//			}
-//		}
+		//		for (UINT it=0; it<items_sz; it++){
+		//			snprintf(buffer, sizeof(buffer), "%2u dir %x", it, items[it].dir);
+		//			printf("%s\n", buffer);
+		//			BSP_LCD_DisplayStringAt(0, 25*(it%10), (uint8_t*)buffer, LEFT_MODE);
+		//			if ((it%10)==9){
+		//			   Screen_Flip_Buffers(&screen);
+		//			   BSP_LCD_Clear(LCD_COLOR_RED);//clear the LCD on blue color
+		//			   osDelay(1000);
+		//			}
+		//		}
 		Screen_Flip_Buffers(&screen);
 		osDelay(1000);
 	}

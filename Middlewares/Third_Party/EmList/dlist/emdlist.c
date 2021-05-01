@@ -86,6 +86,7 @@ bool emdlist_pushfront(DoubleLinkedList* list, void* value) {
             sizeof(DoubleLinkedListElement));
     if(element != NULL) {
         element->value = value;
+        element->prev = NULL;
         element->next = NULL;
         if(emdlist_is_empty(list)) {
             list->head = element;
@@ -162,6 +163,7 @@ bool emdlist_is_empty(DoubleLinkedList* list) {
 
 DoubleLinkedListIterator emdlist_iterator(DoubleLinkedList* list) {
     DoubleLinkedListIterator iterator;
+    iterator.prev = NULL;
     iterator.next = (list != NULL ? list->head : NULL);
     return iterator;
 }
@@ -169,6 +171,7 @@ DoubleLinkedListIterator emdlist_iterator(DoubleLinkedList* list) {
 DoubleLinkedListIterator emdlist_reverse_iterator(DoubleLinkedList* list) {
     DoubleLinkedListIterator iterator;
     iterator.prev = (list != NULL ? list->tail : NULL);
+    iterator.next = NULL;
     return iterator;
 }
 
@@ -177,6 +180,7 @@ DoubleLinkedListElement* emdlist_iterator_next(DoubleLinkedListIterator* iterato
     DoubleLinkedListElement* next = NULL;
     if(iterator != NULL) {
         next = iterator->next;
+        iterator->prev = (next != NULL ? next->prev : NULL);
         iterator->next = (next != NULL ? next->next : NULL);
     }
     return next;
@@ -188,6 +192,7 @@ DoubleLinkedListElement* emdlist_iterator_prev(DoubleLinkedListIterator* iterato
     if(iterator != NULL) {
         prev = iterator->prev;
         iterator->prev = (prev != NULL ? prev->prev : NULL);
+        iterator->next = (prev != NULL ? prev->next : NULL);
     }
     return prev;
 }
